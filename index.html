@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LinguaLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #eaf1fb;
+    --ink: #14213d;
+    --muted: #5b6b8c;
+    --card: #ffffff;
+    --accent: #ffc93c;
+    --blue: #2f6fed;
+    --ok: #1f9d68;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px 40px;
+    font-family: "Nunito", system-ui, sans-serif;
+    background: var(--bg); color: var(--ink);
+  }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 34px; font-weight: 900; margin: 0 0 4px; letter-spacing: -0.5px; }
+  .sub { margin: 0 0 18px; color: var(--muted); font-weight: 600; }
+
+  .langs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .langs button {
+    font: inherit; font-weight: 800; font-size: 16px;
+    padding: 10px 18px; border: 2px solid var(--ink); border-radius: 999px;
+    background: transparent; color: var(--ink); cursor: pointer;
+  }
+  .langs button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .langs button:focus-visible, #start:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+
+  .stage {
+    position: relative; border-radius: 20px; overflow: hidden;
+    background: #cfd9ec; aspect-ratio: 4 / 3;
+    border: 3px solid var(--ink);
+  }
+  video, canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  #start {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    font: inherit; font-weight: 900; font-size: 20px;
+    padding: 14px 30px; border: 3px solid var(--ink); border-radius: 16px;
+    background: var(--accent); color: var(--ink); cursor: pointer;
+  }
+  #start[hidden] { display: none; }
+
+  .flash {
+    margin-top: 16px; padding: 22px 20px; border-radius: 20px;
+    background: var(--card); border: 3px solid var(--ink);
+    text-align: center;
+  }
+  #word { font-size: clamp(40px, 12vw, 72px); font-weight: 900; line-height: 1.1; min-height: 1.1em; }
+  #detail { margin-top: 6px; color: var(--muted); font-weight: 600; min-height: 1.4em; }
+  #replay {
+    margin-top: 10px; font: inherit; font-weight: 800; padding: 8px 16px;
+    border: 2px solid var(--ink); border-radius: 999px; background: var(--accent);
+    cursor: pointer; display: none;
+  }
+
+  #status { margin: 12px 2px 0; color: var(--muted); font-weight: 600; }
+  #status.error { color: #c0392b; }
+
+  .found { margin-top: 18px; }
+  .found h2 { font-size: 18px; margin: 0 0 8px; }
+  #chips { display: flex; flex-wrap: wrap; gap: 8px; min-height: 36px; }
+  .chip {
+    padding: 6px 14px; border-radius: 999px; background: #fff;
+    border: 2px solid var(--ok); font-weight: 800;
+  }
+  .empty { color: var(--muted); font-weight: 600; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    #word.pop { animation: pop .25s ease-out; }
+    @keyframes pop { from { transform: scale(.85); } to { transform: scale(1); } }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>LinguaLens</h1>
+  <p class="sub">Arahkan benda ke kamera dan dengar namanya.</p>
+
+  <div class="langs" id="langs">
+    <button type="button" data-lang="en" aria-pressed="true">English</button>
+    <button type="button" data-lang="de" aria-pressed="false">Deutsch</button>
+    <button type="button" data-lang="ru" aria-pressed="false">Русский</button>
+  </div>
+
+  <div class="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <button type="button" id="start">Mulai kamera</button>
+  </div>
+
+  <div class="flash">
+    <div id="word" aria-live="polite"></div>
+    <div id="detail">Kata akan muncul di sini.</div>
+    <button type="button" id="replay">Dengar lagi</button>
+  </div>
+
+  <div id="status">Pilih bahasa, lalu mulai kamera.</div>
+
+  <div class="found">
+    <h2>Kata yang sudah ditemukan</h2>
+    <div id="chips"><span class="empty">Belum ada.</span></div>
+  </div>
+</main>
+
+<script src="config.js"></script>
+<script>
+const video    = document.getElementById("video");
+const overlay  = document.getElementById("overlay");
+const ctx      = overlay.getContext("2d");
+const wordEl   = document.getElementById("word");
+const detailEl = document.getElementById("detail");
+const statusEl = document.getElementById("status");
+const startBtn = document.getElementById("start");
+const replayBtn= document.getElementById("replay");
+const chipsEl  = document.getElementById("chips");
+
+const SPEECH_LANG = { en: "en-US", de: "de-DE", ru: "ru-RU" };
+
+let words = {};
+let currentLang = "en";
+let lastLabel = null, stableCount = 0;
+let lastKey = null;
+const lastSpoken = {};
+const found = new Set();
+
+function setStatus(msg, isError = false) {
+  statusEl.textContent = msg;
+  statusEl.className = isError ? "error" : "";
+}
+
+/* ---------- Kamus ---------- */
+fetch("words.json", { cache: "no-store" })
+  .then(r => r.json())
+  .then(d => {
+    words = {};
+    for (const k in d) words[normalize(k)] = d[k];   // kunci dibuat huruf kecil otomatis
+    console.log("Kunci words.json:", Object.keys(words));
+  })
+  .catch(() => setStatus("words.json tidak bisa dimuat. Jalankan lewat server lokal.", true));
+
+/* ---------- Pilih bahasa ---------- */
+document.querySelectorAll("#langs button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#langs button").forEach(b => b.setAttribute("aria-pressed", "false"));
+    btn.setAttribute("aria-pressed", "true");
+    currentLang = btn.dataset.lang;
+    for (const k in lastSpoken) delete lastSpoken[k];
+    if (lastKey) showWord(lastKey, false);
+  });
+});
+
+/* ---------- Kamera ---------- */
+startBtn.addEventListener("click", async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: 640, height: 480 }
+    });
+    video.srcObject = stream;
+    video.onloadedmetadata = () => {
+      overlay.width = video.videoWidth;
+      overlay.height = video.videoHeight;
+      startBtn.hidden = true;
+      setStatus("Mencari objek...");
+      loop();
+    };
+  } catch (e) {
+    setStatus("Kamera tidak bisa diakses: " + e.message, true);
+  }
+});
+
+/* ---------- Roboflow ---------- */
+const grab = document.createElement("canvas");
+function frameToBase64() {
+  grab.width = video.videoWidth;
+  grab.height = video.videoHeight;
+  grab.getContext("2d").drawImage(video, 0, 0);
+  return grab.toDataURL("image/jpeg", 0.7).split(",")[1];
+}
+
+// Cari array prediksi di mana pun posisinya dalam hasil workflow
+function findPredictions(node) {
+  if (!node) return null;
+  if (Array.isArray(node)) {
+    if (node.length && typeof node[0] === "object" && "class" in node[0]) return node;
+    for (const item of node) { const r = findPredictions(item); if (r) return r; }
+    return null;
+  }
+  if (typeof node === "object") {
+    if (Array.isArray(node.predictions)) return node.predictions;
+    for (const k in node) { const r = findPredictions(node[k]); if (r) return r; }
+  }
+  return null;
+}
+
+async function detect() {
+  // Frame dikirim ke server.py (/detect), lalu server.py meneruskannya ke Roboflow
+  const res = await fetch("/detect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: frameToBase64() })
+  });
+  if (!res.ok) {
+    const msg = (await res.text()).slice(0, 150);
+    throw new Error("HTTP " + res.status + " " + msg);
+  }
+  const data = await res.json();
+  console.log("Respon Roboflow:", data);   // hapus baris ini setelah semuanya berjalan
+  const preds = findPredictions(data.outputs) || [];
+  return preds.filter(p => p.confidence >= CONFIG.MIN_CONFIDENCE);
+}
+
+/* ---------- Tampilan ---------- */
+function draw(preds) {
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  ctx.lineWidth = 4;
+  ctx.font = "800 20px Nunito, system-ui, sans-serif";
+  preds.forEach(p => {
+    const x = p.x - p.width / 2, y = p.y - p.height / 2;
+    ctx.strokeStyle = "#ffc93c";
+    ctx.strokeRect(x, y, p.width, p.height);
+    const text = `${p.class} ${(p.confidence * 100).toFixed(0)}%`;
+    const w = ctx.measureText(text).width + 14;
+    ctx.fillStyle = "#ffc93c";
+    ctx.fillRect(x, Math.max(0, y - 28), w, 28);
+    ctx.fillStyle = "#14213d";
+    ctx.fillText(text, x + 7, Math.max(21, y - 7));
+  });
+}
+
+function normalize(label) {
+  return String(label).toLowerCase().trim().replace(/\s+/g, "_");
+}
+
+function addChip(key) {
+  if (found.has(key)) return;
+  found.add(key);
+  if (found.size === 1) chipsEl.innerHTML = "";
+  const chip = document.createElement("span");
+  chip.className = "chip";
+  chip.textContent = words[key][currentLang];
+  chip.dataset.key = key;
+  chipsEl.appendChild(chip);
+}
+
+function refreshChips() {
+  chipsEl.querySelectorAll(".chip").forEach(c => {
+    c.textContent = words[c.dataset.key][currentLang];
+  });
+}
+
+/* ---------- Suara ---------- */
+function playAudio(key) {
+  const text = words[key][currentLang];
+  const audio = new Audio(`audio/${currentLang}/${key}.mp3`);
+  audio.play().catch(() => {
+    // cadangan jika file MP3 tidak ada
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = SPEECH_LANG[currentLang];
+    speechSynthesis.speak(u);
+  });
+}
+
+function showWord(key, speak = true) {
+  lastKey = key;
+  const entry = words[key];
+  wordEl.textContent = entry[currentLang];
+  wordEl.classList.remove("pop"); void wordEl.offsetWidth; wordEl.classList.add("pop");
+  detailEl.textContent = "Objek: " + key;
+  replayBtn.style.display = "inline-block";
+  addChip(key);
+  refreshChips();
+  if (speak) playAudio(key);
+}
+
+replayBtn.addEventListener("click", () => { if (lastKey) playAudio(lastKey); });
+
+/* ---------- Logika stabil + cooldown ---------- */
+function handle(preds) {
+  if (!preds.length) { lastLabel = null; stableCount = 0; return; }
+  const best = preds.reduce((a, b) => a.confidence > b.confidence ? a : b);
+  const key = normalize(best.class);
+  console.log("Deteksi:", best.class, "-> kunci:", key, "| ada di words.json:", !!words[key]);
+
+  if (!words[key]) {
+    setStatus(`Kelas "${best.class}" belum ada di words.json. Tambahkan kunci "${key}".`, true);
+    return false;
+  }
+
+  if (key === lastLabel) stableCount++;
+  else { lastLabel = key; stableCount = 1; }
+
+  const now = Date.now();
+  if (stableCount >= CONFIG.STABLE_FRAMES &&
+      (!lastSpoken[key] || now - lastSpoken[key] > CONFIG.COOLDOWN_MS)) {
+    lastSpoken[key] = now;
+    showWord(key);
+  }
+}
+
+/* ---------- Loop utama ---------- */
+async function loop() {
+  try {
+    const preds = await detect();
+    draw(preds);
+    const ok = handle(preds);
+    if (ok !== false) {
+      if (preds.length) setStatus("Terdeteksi: " + preds[0].class);
+      else setStatus("Mencari objek...");
+    }
+  } catch (e) {
+    setStatus("Error: " + e.message + " (cek Console, F12)", true);
+  }
+  setTimeout(loop, CONFIG.INTERVAL_MS);
+}
+</script>
+</body>
+</html>

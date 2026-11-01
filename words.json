@@ -1,0 +1,10 @@
+{
+  "Botol": { "en": "bottle", "de": "Flasche", "ru": "бутылка" },
+  "Mouse":    { "en": "Computer mouse",    "de": "Computermaus",   "ru": "Компьютерная мышь" },
+  "Remot":   { "en": "Remote",   "de": "Fernbedienung",    "ru": "Пульт" },
+  "Handphone":  { "en": "Mobile phone",  "de": "Handy",   "ru": "Мобильный телефон" },
+  "Sendok":    { "en": "Spoon",    "de": "Löffel",   "ru": "Ложка" },
+  "Penghapus": { "en": "Eraser", "de": "Radiergummi",  "ru": "Ластик" }
+}
+
+
